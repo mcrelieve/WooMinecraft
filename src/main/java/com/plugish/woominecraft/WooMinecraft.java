@@ -16,6 +16,7 @@ import com.plugish.woominecraft.pojo.WMCPojo;
 import com.plugish.woominecraft.pojo.WMCProcessedOrders;
 import okhttp3.*;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -191,32 +192,16 @@ public final class WooMinecraft extends JavaPlugin {
 		// foreach ORDERS in JSON feed
 		List<Integer> processedOrders = new ArrayList<>();
 		for ( Order order : orderList ) {
-			Player player = getServer().getPlayerExact( order.getPlayer() );
-			if ( null == player ) {
-				debug_log( "Player was null for an order", 2 );
-				continue;
-			}
-
-			// World whitelisting.
-			if ( getConfig().isSet( "whitelist-worlds" ) ) {
-				List<String> whitelistWorlds = getConfig().getStringList( "whitelist-worlds" );
-				String playerWorld = player.getWorld().getName();
-				if ( ! whitelistWorlds.contains( playerWorld ) ) {
-					wmc_log( "Player " + player.getDisplayName() + " was in world " + playerWorld + " which is not in the white-list, no commands were ran." );
-					continue;
-				}
-			}
+			OfflinePlayer offlineplayer = Bukkit.getOfflinePlayer(order.getPlayer());
 
 			// Walk over all commands and run them at the next available tick.
 			for ( String command : order.getCommands() ) {
 				//Auth player against Mojang api
-				if ( ! isPaidUser( player ) ) {
-					debug_log( "User is not a paid player " + player.getDisplayName() );
-					return false;
-				}
+
+				String newcommand = command.replace(order.getPlayer(), String.valueOf(offlineplayer.getUniqueId()));
 
 				BukkitScheduler scheduler = Bukkit.getServer().getScheduler();
-				scheduler.scheduleSyncDelayedTask(instance, () -> Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), command), 20L);
+				scheduler.scheduleSyncDelayedTask(instance, () -> Bukkit.getServer().dispatchCommand(Bukkit.getServer().getConsoleSender(), newcommand), 20L);
 			}
 
 			debug_log( "Adding item to list - " + order.getOrderId() );
@@ -224,10 +209,6 @@ public final class WooMinecraft extends JavaPlugin {
 			debug_log( "Processed length is " + processedOrders.size() );
 		}
 
-		// If it's empty, we skip it.
-		if ( processedOrders.isEmpty() ) {
-			return false;
-		}
 
 		// Send/update processed orders.
 		return sendProcessedOrders( processedOrders );
@@ -366,84 +347,5 @@ public final class WooMinecraft extends JavaPlugin {
 				this.getLogger().severe( message );
 				break;
 		}
-	}
-
-	/**
-	 * Determines if the user is a paid user or not.
-	 *
-	 * @param player A player object
-	 * @return If the user is a paid player.
-	 */
-	private boolean isPaidUser(Player player) {
-		String playerName = player.getName();
-		String playerUUID = player.getUniqueId().toString().replace( "-", "" );
-		String playerKeyBase = playerName + ':' + playerUUID + ':';
-		String validPlayerKey = playerKeyBase + true;
-		String invalidPlayerKey = playerKeyBase + false;
-
-		// Check if server is in online mode.
-		if (Bukkit.getServer().getOnlineMode()) {
-			wmc_log( "Server is in online mode.", 3 );
-			return true;
-		}
-
-		if ( ! Bukkit.spigot().getConfig().getBoolean("settings.bungeecord") ) {
-			wmc_log( "Server in offline Mode", 3 );
-			return false;
-		}
-
-		// Check the base pattern, if it exists, return if the player is valid or not.
-		// Doing so should save on many if/else statements
-		if ( PlayersMap.toString().contains( playerKeyBase ) ) {
-			boolean valid = PlayersMap.contains( validPlayerKey );
-			if ( ! valid ) {
-				player.sendMessage( "Mojang Auth: Please Speak with a admin about your purchase" );
-				wmc_log("Offline mode not supported", 3);
-			}
-
-			return valid;
-		}
-
-		debug_log( "Player was not in the key set " + NL + PlayersMap.toString() );
-
-		try {
-			URL mojangUrl = new URL("https://api.mojang.com/users/profiles/minecraft/" +  playerName);
-			InputStream inputStream = mojangUrl.openStream();
-			Scanner scanner = new Scanner(inputStream);
-			String apiResponse = scanner.next();
-
-			debug_log(
-				"Logging stream data:" + NL +
-				inputStream.toString() + NL +
-				apiResponse + NL +
-				playerName + NL +
-				playerUUID
-			);
-
-			if ( ! apiResponse.contains( playerName ) ) {
-				PlayersMap.add( invalidPlayerKey );
-				throw new IOException("Mojang Auth: PlayerName doesn't exist");
-			}
-
-			if ( ! apiResponse.contains( playerUUID ) ) {
-				//if Username exists but is using the offline uuid(doesn't match mojang records) throw IOException and add player to the list as cracked
-				PlayersMap.add( invalidPlayerKey );
-				throw new IOException("Mojang Auth: PlayerName doesn't match uuid for account");
-			}
-
-			PlayersMap.add( validPlayerKey );
-			debug_log( PlayersMap.toString() );
-			return true;
-		} catch ( MalformedURLException urlException ) {
-			debug_log("Malformed URL: " + urlException.getMessage(), 3 );
-			player.sendMessage( "Mojang API Error: Please try again later or contact an admin about your purchase." );
-		} catch ( IOException e ) {
-			debug_log( "Map is " + PlayersMap.toString() );
-			debug_log( "Message when getting URL data " + e.getMessage(), 3 );
-			player.sendMessage("Mojang Auth: Please Speak with a admin about your purchase");
-		}
-
-		// Default to false, worst case they have to run this twice.
-		return false;
 	}
 }
